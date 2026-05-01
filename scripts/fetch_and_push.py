@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RSS 每日摘要 - Kimi (Moonshot) 翻译
+RSS 每日摘要 - DeepSeek (Moonshot) 翻译
 """
 
 import json
@@ -14,10 +14,10 @@ import time
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
-# Kimi (Moonshot) 配置
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_ENDPOINT = "https://api.moonshot.cn/v1/chat/completions"
-KIMI_MODEL = "kimi-k2-0905-preview"
+# DeepSeek 配置
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 DETAILED_LOGS = []
 
@@ -28,51 +28,46 @@ def load_feeds():
         return json.load(f)
 
 
-def translate_with_kimi(title, content):
-    """Kimi 翻译"""
-    if not KIMI_API_KEY:
-        print(f"  [Kimi] 缺少 API Key")
+def translate_with_deepseek(title, content):
+    """DeepSeek 翻译"""
+    if not DEEPSEEK_API_KEY:
+        print(f"  [DeepSeek] 缺少 API Key")
         return None
     
     prompt = f"用 50-80 字中文总结以下新闻，只输出中文内容：\n\n标题：{title}\n内容：{content[:400]}\n\n摘要："
     
     try:
         resp = requests.post(
-            KIMI_ENDPOINT,
+            DEEPSEEK_ENDPOINT,
             headers={
-                'Authorization': f'Bearer {KIMI_API_KEY}',
+                'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
                 'Content-Type': 'application/json'
             },
             json={
-                'model': KIMI_MODEL,
+                'model': DEEPSEEK_MODEL,
                 'messages': [{'role': 'user', 'content': prompt}],
                 'max_tokens': 200
             },
             timeout=30
         )
         
-        print(f"  [Kimi] 状态码：{resp.status_code}")
+        print(f"  [DeepSeek] 状态码：{resp.status_code}")
         
         if resp.status_code == 200:
             result = resp.json()
-            print(f"  [Kimi] 响应：{result}")
             if 'choices' in result and result['choices']:
                 summary = result['choices'][0]['message']['content'].strip()
-                print(f"  [Kimi] 摘要：{summary[:80]}...")
-                # 简单清理，保留中文
+                print(f"  [DeepSeek] 摘要：{summary[:80]}...")
                 summary = summary.replace('"', '').replace("'", '').strip()
-                # 只要包含中文就返回
                 if re.search(r'[\u4e00-\u9fff]', summary):
                     return summary[:120]
                 else:
-                    print(f"  [Kimi] 警告：返回内容不含中文")
-            else:
-                print(f"  [Kimi] 警告：无 choices")
+                    print(f"  [DeepSeek] 警告：返回内容不含中文")
         else:
-            print(f"  [Kimi] 错误：{resp.text[:200]}")
+            print(f"  [DeepSeek] 错误：{resp.text[:200]}")
         return None
     except Exception as e:
-        print(f"  [Kimi] 异常：{e}")
+        print(f"  [DeepSeek] 异常：{e}")
         return None
 
 
@@ -104,9 +99,9 @@ def ai_translate_and_summarize(title, content, index=0):
         'timestamp': datetime.now().isoformat()
     }
     
-    result = translate_with_kimi(title, translate_content)
+    result = translate_with_deepseek(title, translate_content)
     if result:
-        log_entry['model'] = KIMI_MODEL
+        log_entry['model'] = DEEPSEEK_MODEL
         log_entry['success'] = True
         DETAILED_LOGS.append(log_entry)
         return result
@@ -151,8 +146,8 @@ def fetch_feeds(feeds_config):
     category_stats = {}
     
     print(f"\n🤖 翻译配置:")
-    print(f"   模型：{KIMI_MODEL}")
-    print(f"   API Key: {'✅' if KIMI_API_KEY else '❌'}")
+    print(f"   模型：{DEEPSEEK_MODEL}")
+    print(f"   API Key: {'✅' if DEEPSEEK_API_KEY else '❌'}")
     print("=" * 70)
     
     for feed_config in feeds_config['feeds']:
@@ -322,7 +317,7 @@ def push_to_feishu(message):
 
 def main():
     print("=" * 70)
-    print("🚀 RSS 智能摘要 - Kimi (Moonshot)")
+    print("🚀 RSS 智能摘要 - DeepSeek (Moonshot)")
     print("=" * 70)
     
     config = load_feeds()
