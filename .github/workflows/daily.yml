@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install feedparser requests
+        run: pip install feedparser requests beautifulsoup4
 
       - name: AI News Daily
         env:
