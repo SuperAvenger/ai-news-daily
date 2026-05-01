@@ -29,13 +29,18 @@ def load_feeds():
 
 
 def translate_with_deepseek(title, content):
-    """DeepSeek 翻译"""
+    """DeepSeek 翻译标题+摘要"""
     if not DEEPSEEK_API_KEY:
         print(f"  [DeepSeek] 缺少 API Key")
-        return None
+        return None, None
     
-    prompt = f"用 50-80 字中文总结以下新闻，只输出中文内容：\n\n标题：{title}\n内容：{content[:400]}\n\n摘要："
-    
+    prompt = f"""请将以下英文AI新闻翻译成中文，输出格式：
+标题：<中文标题>
+摘要：<50-80字中文摘要>
+
+英文标题：{title}
+英文内容：{content[:400] if content else title}"""
+
     try:
         resp = requests.post(
             DEEPSEEK_ENDPOINT,
@@ -46,29 +51,40 @@ def translate_with_deepseek(title, content):
             json={
                 'model': DEEPSEEK_MODEL,
                 'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 200
+                'max_tokens': 300
             },
             timeout=30
         )
         
-        print(f"  [DeepSeek] 状态码：{resp.status_code}")
-        
         if resp.status_code == 200:
             result = resp.json()
             if 'choices' in result and result['choices']:
-                summary = result['choices'][0]['message']['content'].strip()
-                print(f"  [DeepSeek] 摘要：{summary[:80]}...")
-                summary = summary.replace('"', '').replace("'", '').strip()
-                if re.search(r'[\u4e00-\u9fff]', summary):
-                    return summary[:120]
-                else:
-                    print(f"  [DeepSeek] 警告：返回内容不含中文")
+                text = result['choices'][0]['message']['content'].strip()
+                
+                # 解析标题和摘要
+                cn_title = ""
+                cn_summary = ""
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if line.startswith('标题：') or line.startswith('标题:'):
+                        cn_title = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                    elif line.startswith('摘要：') or line.startswith('摘要:'):
+                        cn_summary = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                
+                # 如果没解析出来，用整体内容
+                if not cn_title:
+                    cn_title = text.split('\n')[0][:50]
+                if not cn_summary:
+                    cn_summary = text[:120]
+                
+                print(f"  [DeepSeek] 标题: {cn_title[:30]}...")
+                return cn_title, cn_summary
         else:
-            print(f"  [DeepSeek] 错误：{resp.text[:200]}")
-        return None
+            print(f"  [DeepSeek] 错误：{resp.text[:100]}")
+        return None, None
     except Exception as e:
         print(f"  [DeepSeek] 异常：{e}")
-        return None
+        return None, None
 
 
 def ai_translate_and_summarize(title, content, index=0):
@@ -182,32 +198,34 @@ def fetch_feeds(feeds_config):
                 match_score = match_keywords(title, summary, keywords)
                 
                 is_en = feed_config.get('language', 'zh') == 'en'
-                if is_en:
-                    print(f"  🌐 [{article_index:2d}] {title[:40]}...")
-                else:
-                    print(f"  📝 [{article_index:2d}] {title[:40]}...")
+                print(f"  🌐 [{article_index:2d}] {title[:40]}...")
                 
-                brief = ai_translate_and_summarize(title, summary, article_index)
+                # 翻译标题+摘要
+                cn_title, cn_summary = translate_with_deepseek(title, summary)
                 
-                if brief.startswith('[EN]'):
-                    category_stats[category]['english'] += 1
-                    if is_en:
-                        print(f"      ⚠️ 英文原文")
-                else:
+                if cn_title:
+                    display_title = cn_title
+                    brief = cn_summary or cn_title
                     category_stats[category]['translated'] += 1
-                    print(f"      ✅ {brief[:40]}...")
+                    print(f"      ✅ {display_title[:30]}")
+                else:
+                    display_title = title
+                    brief = title
+                    category_stats[category]['english'] += 1
+                    print(f"      ⚠️ 翻译失败")
                 
                 time.sleep(0.1)
                 
                 articles.append({
                     'category': category,
                     'source': feed_config['name'],
-                    'title': title,
+                    'title': display_title,
+                    'original_title': title,
                     'link': entry.link,
                     'summary': brief,
                     'weight': weight,
                     'match_score': match_score,
-                    'score': weight,
+                    'score': weight * match_score,
                     'published': entry.get('published_parsed') or entry.get('updated_parsed'),
                 })
                 category_stats[category]['passed'] += 1
@@ -258,36 +276,36 @@ def format_message(articles):
     if not articles:
         return "今日暂无内容"
     
+    # 按 score 降序排序（热度优先）
+    articles.sort(key=lambda x: x.get('score', 0), reverse=True)
+    
     by_category = {}
     for article in articles:
         by_category.setdefault(article['category'], []).append(article)
     
-    sorted_categories = sorted(by_category.items(), key=lambda x: len(x[1]), reverse=True)
+    sorted_categories = sorted(by_category.items(), key=lambda x: max(a.get('score',0) for a in x[1]), reverse=True)
     
     lines = [
-        f"📰 **每日新闻摘要** ({datetime.now().strftime('%Y年%m月%d日')})",
+        f"🤖 **AI 资讯日报** ({datetime.now().strftime('%Y年%m月%d日')})",
         f"共 **{len(articles)}** 条",
-        "=" * 50,
         ""
     ]
     
     for category, items in sorted_categories:
-        lines.append(f"\n{category} ({len(items)}条)")
-        lines.append("-" * 40)
+        # 按 score 排序
+        items.sort(key=lambda x: x.get('score', 0), reverse=True)
+        
+        lines.append(f"\n**{category}** ({len(items)}条)")
         
         for i, item in enumerate(items, 1):
-            # 如果标题是英文但摘要是中文，用摘要前 40 字作为显示标题
-            display_title = item['title']
-            if re.search(r'[\u4e00-\u9fff]', item['summary']) and not re.search(r'[\u4e00-\u9fff]', item['title']):
-                clean_summary = re.sub(r'[📰💡]', '', item['summary']).strip()
-                display_title = clean_summary[:40] + ('...' if len(clean_summary) > 40 else '')
+            title = item['title']
+            summary = item.get('summary', '')
             
-            lines.append(f"\n**{i:2d}. {display_title}**")
-            lines.append(f"📍 {item['source']}")
-            lines.append(f"💡 {item['summary']}")
+            lines.append(f"\n**{i}. {title}**")
+            if summary and summary != title:
+                lines.append(f"💡 {summary}")
             lines.append(f"🔗 [阅读原文]({item['link']})")
     
-    lines.append("\n" + "=" * 50)
     return '\n'.join(lines)
 
 
