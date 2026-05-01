@@ -42,9 +42,17 @@ def fetch_hacker_news(limit=20):
                     if sr.status_code == 200:
                         d = sr.json()
                         title = d.get("title", "")
-                        # 过滤 AI 相关
-                        ai_keywords = ["ai", "llm", "gpt", "claude", "gemini", "deepseek", "openai", "anthropic", "model", "neural", "transformer", "machine learning", "artificial"]
-                        if any(kw in title.lower() for kw in ai_keywords) and d.get("url"):
+                        # 过滤 AI 相关 (严格匹配)
+                        ai_keywords = [
+                            "ai ", " ai", "ai-", "-ai", "ai-powered", "ai driven",
+                            "llm", "gpt", "claude", "gemini", "deepseek", "openai", "anthropic",
+                            "chatgpt", "copilot", "machine learning", "deep learning",
+                            "neural", "transformer", "large language model", "foundation model",
+                            "diffusion", "stable diffusion", "midjourney", "dall-e",
+                            "artificial intelligence", "generative ai", "gen ai",
+                        ]
+                        title_lower = title.lower()
+                        if any(kw in title_lower for kw in ai_keywords) and d.get("url"):
                             items.append({
                                 "title": title,
                                 "link": d["url"],
@@ -91,14 +99,38 @@ def fetch_reddit_ai(limit=15):
     subreddits = ["artificial", "MachineLearning", "LocalLLaMA", "singularity"]
     for sub in subreddits:
         try:
+            # 尝试 JSON API
             resp = requests.get(
                 f"https://www.reddit.com/r/{sub}/hot.json?limit=10",
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ai-news-bot/1.0)"},
                 timeout=15,
             )
             if resp.status_code != 200:
-                print(f"  Reddit r/{sub}: HTTP {resp.status_code}")
+                # fallback: 用 old.reddit.com RSS
+                print(f"  Reddit r/{sub}: JSON {resp.status_code}, trying RSS...")
+                resp = requests.get(
+                    f"https://www.reddit.com/r/{sub}/hot.rss?limit=10",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for entry in soup.find_all("entry")[:8]:
+                        title = entry.find("title")
+                        link = entry.find("link")
+                        if title and link:
+                            href = link.get("href", "")
+                            items.append({
+                                "title": title.get_text(strip=True)[:120],
+                                "link": href,
+                                "source": f"r/{sub}",
+                                "points": 0,
+                                "comments": 0,
+                                "score": 0,
+                                "date": "",
+                            })
                 continue
+            
             data = resp.json()
             for post in data.get("data", {}).get("children", []):
                 d = post.get("data", {})
