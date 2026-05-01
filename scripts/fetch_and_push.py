@@ -1,365 +1,348 @@
 #!/usr/bin/env python3
 """
-RSS 每日摘要 - DeepSeek (Moonshot) 翻译
+AI 资讯日报 - 按热度排序版
+主源: Hacker News + Reddit (有真实投票数据)
+辅助: RSS 源 (补充)
+翻译: DeepSeek
 """
-
-import json
-import feedparser
-import requests
-from datetime import datetime
-from pathlib import Path
 import os
+import json
 import re
 import time
+from datetime import datetime
+from pathlib import Path
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+import requests
+from bs4 import BeautifulSoup
 
-# DeepSeek 配置
+FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', '')
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 
-DETAILED_LOGS = []
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
-def load_feeds():
-    config_path = Path(__file__).parent.parent / 'config' / 'feeds.json'
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+# ── 数据源采集 ─────────────────────────────────────────────
 
-
-def translate_with_deepseek(title, content):
-    """DeepSeek 翻译标题+摘要"""
-    if not DEEPSEEK_API_KEY:
-        print(f"  [DeepSeek] 缺少 API Key")
-        return None, None
-    
-    prompt = f"""请将以下英文AI新闻翻译成中文，输出格式：
-标题：<中文标题>
-摘要：<50-80字中文摘要>
-
-英文标题：{title}
-英文内容：{content[:400] if content else title}"""
-
+def fetch_hacker_news(limit=20):
+    """Hacker News 热门 AI 帖子 (按 points 排序)"""
+    items = []
     try:
-        resp = requests.post(
-            DEEPSEEK_ENDPOINT,
-            headers={
-                'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
-                'Content-Type': 'application/json'
+        # 搜索 AI 相关，按热度排序
+        resp = requests.get(
+            "https://hn.algolia.com/api/v1/search",
+            params={
+                "query": "AI OR LLM OR GPT OR Claude OR Gemini OR DeepSeek OR OpenAI OR Anthropic",
+                "tags": "story",
+                "hitsPerPage": 30,
+                "numericFilters": "points>10",  # 至少10个赞
             },
-            json={
-                'model': DEEPSEEK_MODEL,
-                'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 300
-            },
-            timeout=30
+            timeout=15,
         )
-        
-        if resp.status_code == 200:
-            result = resp.json()
-            if 'choices' in result and result['choices']:
-                text = result['choices'][0]['message']['content'].strip()
-                
-                # 解析标题和摘要
-                cn_title = ""
-                cn_summary = ""
-                for line in text.split('\n'):
-                    line = line.strip()
-                    if line.startswith('标题：') or line.startswith('标题:'):
-                        cn_title = line.split('：', 1)[-1].split(':', 1)[-1].strip()
-                    elif line.startswith('摘要：') or line.startswith('摘要:'):
-                        cn_summary = line.split('：', 1)[-1].split(':', 1)[-1].strip()
-                
-                # 如果没解析出来，用整体内容
-                if not cn_title:
-                    cn_title = text.split('\n')[0][:50]
-                if not cn_summary:
-                    cn_summary = text[:120]
-                
-                print(f"  [DeepSeek] 标题: {cn_title[:30]}...")
-                return cn_title, cn_summary
-        else:
-            print(f"  [DeepSeek] 错误：{resp.text[:100]}")
-        return None, None
-    except Exception as e:
-        print(f"  [DeepSeek] 异常：{e}")
-        return None, None
-
-
-def ai_translate_and_summarize(title, content, index=0):
-    """AI 翻译"""
-    clean_content = re.sub(r'<[^>]+>', '', content or '')
-    clean_content = re.sub(r'\s+', ' ', clean_content).strip()
-    
-    # 如果 content 为空或与 title 几乎相同，用 title 翻译
-    use_title_only = (not clean_content) or (len(clean_content) < len(title) * 1.5 and title in clean_content)
-    
-    text = title + ' ' + clean_content
-    chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-    english_words = len(re.findall(r'[a-zA-Z]+', text))
-    
-    # 如果英文单词数远多于中文字符，需要翻译
-    if english_words > chinese_chars * 3:
-        print(f"  [判断] 英文{english_words} vs 中文{chinese_chars} → 需要翻译")
-    else:
-        print(f"  [判断] 英文{english_words} vs 中文{chinese_chars} → 已有中文")
-        return clean_content[:120] + ('...' if len(clean_content) > 120 else '')
-    
-    # 准备翻译内容
-    translate_content = title if use_title_only else clean_content[:600]
-    
-    log_entry = {
-        'index': index,
-        'title': title,
-        'timestamp': datetime.now().isoformat()
-    }
-    
-    result = translate_with_deepseek(title, translate_content)
-    if result:
-        log_entry['model'] = DEEPSEEK_MODEL
-        log_entry['success'] = True
-        DETAILED_LOGS.append(log_entry)
-        return result
-    
-    log_entry['model'] = 'fallback'
-    log_entry['success'] = False
-    DETAILED_LOGS.append(log_entry)
-    return f"[EN] {title}"
-
-
-def is_quality_article(title, summary, config):
-    if len(title) < config.get('min_title_length', 8):
-        return False
-    for keyword in config.get('blacklist_keywords', []):
-        if keyword.lower() in (title + ' ' + (summary or '')).lower():
-            return False
-    return True
-
-
-def match_keywords(title, summary, keywords):
-    if not keywords:
-        return 1
-    text = (title + ' ' + (summary or '')).lower()
-    matches = sum(1 for kw in keywords if kw.lower() in text)
-    return 0.5 + (matches / len(keywords)) * 0.5 if matches >= 1 else 0
-
-
-def fetch_feed_with_headers(url):
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        return feedparser.parse(resp.content)
-    except Exception as e:
-        print(f"  ❌ 抓取失败：{e}")
-        return feedparser.parse(url)
-
-
-def fetch_feeds(feeds_config):
-    articles = []
-    settings = feeds_config.get('settings', {})
-    total_fetched = 0
-    category_stats = {}
-    
-    print(f"\n🤖 翻译配置:")
-    print(f"   模型：{DEEPSEEK_MODEL}")
-    print(f"   API Key: {'✅' if DEEPSEEK_API_KEY else '❌'}")
-    print("=" * 70)
-    
-    for feed_config in feeds_config['feeds']:
-        try:
-            print(f"\n📰 抓取：{feed_config['name']}")
-            feed = fetch_feed_with_headers(feed_config['url'])
-            
-            if not feed.entries:
-                print(f"  ⚠️ 无内容")
-                continue
-            
-            weight = feed_config.get('weight', 5)
-            keywords = feed_config.get('keywords', [])
-            category = feed_config['category']
-            
-            if category not in category_stats:
-                category_stats[category] = {'fetched': 0, 'passed': 0, 'translated': 0, 'english': 0}
-            
-            article_index = 0
-            
-            for entry in feed.entries[:settings.get('max_items_per_feed', 15)]:
-                total_fetched += 1
-                category_stats[category]['fetched'] += 1
-                article_index += 1
-                
-                title = entry.title
-                summary = entry.get('summary', '')
-                
-                if not is_quality_article(title, summary, settings):
-                    continue
-                
-                match_score = match_keywords(title, summary, keywords)
-                
-                is_en = feed_config.get('language', 'zh') == 'en'
-                print(f"  🌐 [{article_index:2d}] {title[:40]}...")
-                
-                # 翻译标题+摘要
-                cn_title, cn_summary = translate_with_deepseek(title, summary)
-                
-                if cn_title:
-                    display_title = cn_title
-                    brief = cn_summary or cn_title
-                    category_stats[category]['translated'] += 1
-                    print(f"      ✅ {display_title[:30]}")
-                else:
-                    display_title = title
-                    brief = title
-                    category_stats[category]['english'] += 1
-                    print(f"      ⚠️ 翻译失败")
-                
-                time.sleep(0.1)
-                
-                articles.append({
-                    'category': category,
-                    'source': feed_config['name'],
-                    'title': display_title,
-                    'original_title': title,
-                    'link': entry.link,
-                    'summary': brief,
-                    'weight': weight,
-                    'match_score': match_score,
-                    'score': weight * match_score,
-                    'published': entry.get('published_parsed') or entry.get('updated_parsed'),
+        data = resp.json()
+        for hit in data.get("hits", []):
+            if hit.get("title") and hit.get("url"):
+                items.append({
+                    "title": hit["title"],
+                    "link": hit["url"],
+                    "source": "Hacker News",
+                    "points": hit.get("points", 0),
+                    "comments": hit.get("num_comments", 0),
+                    "score": hit.get("points", 0),
+                    "date": hit.get("created_at", "")[:16],
                 })
-                category_stats[category]['passed'] += 1
-                
-        except Exception as e:
-            print(f"❌ 抓取失败 {feed_config['name']}: {e}")
-    
-    print("\n" + "=" * 70)
-    print("📊 分类统计:")
-    for cat, stats in category_stats.items():
-        print(f"{cat}: 抓取{stats['fetched']} → 通过{stats['passed']} → 翻译{stats['translated']} → 英文{stats['english']}")
-    
-    success = sum(1 for log in DETAILED_LOGS if log.get('success'))
-    failed = sum(1 for log in DETAILED_LOGS if not log.get('success'))
-    
-    print(f"\n📝 API 统计:")
-    print(f"   翻译成功：{success} 次")
-    print(f"   降级英文：{failed} 次")
-    
-    log_file = Path(__file__).parent.parent / 'detailed_api_logs.json'
-    with open(log_file, 'w', encoding='utf-8') as f:
-        json.dump(DETAILED_LOGS, f, ensure_ascii=False, indent=2)
-    print(f"\n📄 日志已保存：{log_file}")
-    
-    by_category = {}
-    for article in articles:
-        by_category.setdefault(article['category'], []).append(article)
-    
-    def sort_key(article):
-        time_val = 0
-        if article.get('published'):
-            try:
-                time_val = time.mktime(article['published'])
-            except:
-                pass
-        return (article['score'], time_val)
-    
-    final_articles = []
-    for cat, items in by_category.items():
-        items.sort(key=sort_key, reverse=True)
-        final_articles.extend(items[:15])
-    
-    print(f"\n✅ 总计：{total_fetched} → {len(final_articles)}")
-    return final_articles
-
-
-def format_message(articles):
-    if not articles:
-        return "今日暂无内容"
-    
-    # 按发布时间倒序（最新最热的排前面）
-    def time_score(article):
-        if article.get('published'):
-            try:
-                return time.mktime(article['published'])
-            except:
-                pass
-        return 0
-    
-    articles.sort(key=time_score, reverse=True)
-    
-    by_category = {}
-    for article in articles:
-        by_category.setdefault(article['category'], []).append(article)
-    
-    sorted_categories = sorted(by_category.items(), key=lambda x: max(a.get('score',0) for a in x[1]), reverse=True)
-    
-    lines = [
-        f"🤖 **AI 资讯日报** ({datetime.now().strftime('%Y年%m月%d日')})",
-        f"共 **{len(articles)}** 条",
-        ""
-    ]
-    
-    for category, items in sorted_categories:
-        # 按 score 排序
-        items.sort(key=lambda x: x.get('score', 0), reverse=True)
-        
-        lines.append(f"\n**{category}** ({len(items)}条)")
-        
-        for i, item in enumerate(items, 1):
-            title = item['title']
-            summary = item.get('summary', '')
-            
-            lines.append(f"\n**{i}. {title}**")
-            if summary and summary != title:
-                lines.append(f"💡 {summary}")
-            lines.append(f"🔗 [阅读原文]({item['link']})")
-    
-    return '\n'.join(lines)
-
-
-def push_to_feishu(message):
-    webhook = os.environ.get('FEISHU_WEBHOOK')
-    if not webhook:
-        print("\n⚠️ 未配置飞书 Webhook")
-        return
-    
-    try:
-        payload = {
-            "msg_type": "interactive",
-            "card": {
-                "header": {"title": {"tag": "plain_text", "content": "📰 每日新闻摘要"}, "template": "blue"},
-                "elements": [{"tag": "markdown", "content": message}]
-            }
-        }
-        resp = requests.post(webhook, json=payload, timeout=30)
-        print(f"\n飞书推送：{resp.status_code}")
-        if resp.status_code == 200:
-            print("✅ 推送成功！")
-        else:
-            print(f"❌ 推送失败：{resp.text[:100]}")
     except Exception as e:
-        print(f"推送失败：{e}")
+        print(f"HN fetch failed: {e}")
+    
+    # 按热度排序
+    items.sort(key=lambda x: x["score"], reverse=True)
+    return items[:limit]
 
+
+def fetch_reddit_ai(limit=15):
+    """Reddit AI 热门帖子 (按 hot 排序)"""
+    items = []
+    subreddits = ["artificial", "MachineLearning", "LocalLLaMA", "singularity"]
+    for sub in subreddits:
+        try:
+            resp = requests.get(
+                f"https://www.reddit.com/r/{sub}/hot.json?limit=10",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ai-news-bot/1.0)"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            for post in data.get("data", {}).get("children", []):
+                d = post.get("data", {})
+                if d.get("title") and not d.get("stickied"):
+                    url = d.get("url", "")
+                    if url.startswith("/r/"):
+                        url = f"https://www.reddit.com{url}"
+                    score = d.get("score", 0)
+                    items.append({
+                        "title": d["title"][:120],
+                        "link": url,
+                        "source": f"r/{sub}",
+                        "points": score,
+                        "comments": d.get("num_comments", 0),
+                        "score": score,
+                        "date": datetime.fromtimestamp(d.get("created_utc", 0)).strftime("%m-%d %H:%M"),
+                    })
+        except Exception as e:
+            print(f"Reddit ({sub}) failed: {e}")
+    
+    items.sort(key=lambda x: x["score"], reverse=True)
+    return items[:limit]
+
+
+def fetch_rss_supplement(limit=10):
+    """RSS 补充源 (不排序，作为补充)"""
+    feeds = [
+        ("https://techcrunch.com/category/artificial-intelligence/feed/", "TechCrunch"),
+        ("https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "The Verge"),
+        ("https://blog.google/technology/ai/rss/", "Google AI"),
+    ]
+    items = []
+    for url, name in feeds:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for item in soup.find_all("item")[:5]:
+                title = item.find("title")
+                link = item.find("link")
+                if title and link:
+                    href = link.get_text(strip=True) or (link.next_sibling.strip() if link.next_sibling else "")
+                    items.append({
+                        "title": title.get_text(strip=True),
+                        "link": href,
+                        "source": name,
+                        "score": 0,
+                        "date": "",
+                    })
+        except Exception as e:
+            print(f"RSS ({name}) failed: {e}")
+    return items[:limit]
+
+
+# ── DeepSeek 翻译 ──────────────────────────────────────────
+
+def translate_batch(titles):
+    """批量翻译标题 (减少 API 调用)"""
+    if not DEEPSEEK_API_KEY:
+        return titles
+    
+    # 每批最多 10 个
+    all_translated = []
+    for i in range(0, len(titles), 10):
+        batch = titles[i:i+10]
+        numbered = "\n".join(f"{j+1}. {t}" for j, t in enumerate(batch))
+        prompt = f"""将以下英文AI新闻标题翻译成中文，保留编号，只输出翻译结果：
+{numbered}"""
+        
+        try:
+            resp = requests.post(
+                DEEPSEEK_ENDPOINT,
+                headers={
+                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': DEEPSEEK_MODEL,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 500,
+                },
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                content = result['choices'][0]['message']['content'].strip()
+                # 解析编号
+                for line in content.split('\n'):
+                    line = line.strip()
+                    m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
+                    if m:
+                        all_translated.append(m.group(1))
+                    elif line:
+                        all_translated.append(line)
+        except Exception as e:
+            print(f"Translate batch failed: {e}")
+            all_translated.extend(batch)
+        
+        time.sleep(0.5)
+    
+    # 补齐
+    while len(all_translated) < len(titles):
+        all_translated.append(titles[len(all_translated)])
+    
+    return all_translated[:len(titles)]
+
+
+def translate_summaries(titles, summaries):
+    """批量翻译摘要"""
+    if not DEEPSEEK_API_KEY:
+        return summaries
+    
+    all_translated = []
+    for i in range(0, len(summaries), 5):
+        batch = summaries[i:i+5]
+        numbered = "\n".join(f"{j+1}. {t[:200]}" for j, t in enumerate(batch))
+        prompt = f"""将以下英文AI新闻摘要翻译成中文（每条50-80字），保留编号，只输出翻译：
+{numbered}"""
+        
+        try:
+            resp = requests.post(
+                DEEPSEEK_ENDPOINT,
+                headers={
+                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': DEEPSEEK_MODEL,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 800,
+                },
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                content = result['choices'][0]['message']['content'].strip()
+                for line in content.split('\n'):
+                    line = line.strip()
+                    m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
+                    if m:
+                        all_translated.append(m.group(1))
+                    elif line:
+                        all_translated.append(line)
+        except Exception as e:
+            print(f"Translate summaries failed: {e}")
+            all_translated.extend(batch)
+        
+        time.sleep(0.5)
+    
+    while len(all_translated) < len(summaries):
+        all_translated.append(summaries[len(all_translated)])
+    
+    return all_translated[:len(summaries)]
+
+
+# ── 飞书推送 ──────────────────────────────────────────────
+
+def push_to_feishu(hn_items, reddit_items, rss_items):
+    """推送飞书"""
+    if not FEISHU_WEBHOOK:
+        print("FEISHU_WEBHOOK not set")
+        return
+
+    lines = []
+    total = 0
+
+    # Hacker News (最热门)
+    if hn_items:
+        lines.append(f"**🔥 Hacker News 热门** ({len(hn_items)}条)")
+        for i, item in enumerate(hn_items, 1):
+            total += 1
+            points = item.get('points', 0)
+            title = item.get('cn_title', item['title'])
+            lines.append(f"\n**{i}. {title}**")
+            lines.append(f"⬆️ {points}分 | 💬 {item.get('comments',0)}评论")
+            lines.append(f"🔗 [阅读原文]({item['link']})")
+
+    # Reddit (第二热门)
+    if reddit_items:
+        lines.append(f"\n**🔴 Reddit 热门** ({len(reddit_items)}条)")
+        for i, item in enumerate(reddit_items, 1):
+            total += 1
+            points = item.get('points', 0)
+            title = item.get('cn_title', item['title'])
+            lines.append(f"\n**{i}. {title}**")
+            lines.append(f"⬆️ {points}分 | 📍 {item['source']}")
+            lines.append(f"🔗 [阅读原文]({item['link']})")
+
+    # RSS 补充
+    if rss_items:
+        lines.append(f"\n**📰 更多资讯** ({len(rss_items)}条)")
+        for i, item in enumerate(rss_items, 1):
+            total += 1
+            title = item.get('cn_title', item['title'])
+            lines.append(f"\n**{i}. {title}**")
+            lines.append(f"📍 {item['source']}")
+            lines.append(f"🔗 [阅读原文]({item['link']})")
+
+    message = "\n".join(lines)
+
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": f"🤖 AI 资讯日报 ({datetime.now().strftime('%m/%d')})"},
+                "template": "purple",
+            },
+            "elements": [{"tag": "markdown", "content": message}],
+        },
+    }
+
+    try:
+        resp = requests.post(FEISHU_WEBHOOK, json=payload, timeout=30)
+        print(f"飞书推送: {resp.status_code}")
+        if resp.status_code == 200:
+            print("✅ 推送成功")
+        else:
+            print(f"❌ {resp.text[:200]}")
+    except Exception as e:
+        print(f"推送失败: {e}")
+
+
+# ── 主流程 ─────────────────────────────────────────────────
 
 def main():
-    print("=" * 70)
-    print("🚀 RSS 智能摘要 - DeepSeek (Moonshot)")
-    print("=" * 70)
-    
-    config = load_feeds()
-    print(f"📋 {len(config['feeds'])} 个 RSS 源")
-    
-    articles = fetch_feeds(config)
-    if not articles:
-        print("⚠️ 没有文章")
-        return
-    
-    message = format_message(articles)
-    push_to_feishu(message)
-    
-    print("\n" + "=" * 70)
-    print("✅ 完成")
+    print("=" * 60)
+    print("🤖 AI 资讯日报 (热度排序版)")
+    print("=" * 60)
+
+    # 1. 采集
+    print("\n>>> Hacker News...")
+    hn_items = fetch_hacker_news(15)
+    print(f"  获取 {len(hn_items)} 条")
+
+    print("\n>>> Reddit...")
+    reddit_items = fetch_reddit_ai(10)
+    print(f"  获取 {len(reddit_items)} 条")
+
+    print("\n>>> RSS 补充...")
+    rss_items = fetch_rss_supplement(5)
+    print(f"  获取 {len(rss_items)} 条")
+
+    # 2. 批量翻译标题
+    all_titles = [i['title'] for i in hn_items + reddit_items + rss_items]
+    print(f"\n>>> 翻译 {len(all_titles)} 个标题...")
+    translated = translate_batch(all_titles)
+
+    idx = 0
+    for item in hn_items:
+        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        idx += 1
+    for item in reddit_items:
+        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        idx += 1
+    for item in rss_items:
+        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        idx += 1
+
+    # 3. 推送
+    print("\n>>> 推送到飞书...")
+    push_to_feishu(hn_items, reddit_items, rss_items)
+
+    # 4. 保存
+    output_dir = Path(__file__).parent.parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    all_items = hn_items + reddit_items + rss_items
+    with open(output_dir / "ai-news.json", "w", encoding="utf-8") as f:
+        json.dump({"update_time": datetime.now().isoformat(), "items": all_items}, f, ensure_ascii=False, indent=2)
+
+    print(f"\n✅ 完成，共 {len(hn_items) + len(reddit_items) + len(rss_items)} 条")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
