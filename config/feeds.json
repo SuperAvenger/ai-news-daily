@@ -1,27 +1,6 @@
 {
   "feeds": [
     {
-      "name": "量子位",
-      "url": "https://www.qbitai.com/rss",
-      "category": "🤖 AI 资讯",
-      "weight": 10,
-      "keywords": ["AI", "大模型", "人工智能", "算法", "深度学习", "GPT", "模型"]
-    },
-    {
-      "name": "机器之心",
-      "url": "https://www.jiqizhixin.com/rss",
-      "category": "🤖 AI 资讯",
-      "weight": 10,
-      "keywords": ["AI", "机器学习", "大模型", "神经网络", "深度学习"]
-    },
-    {
-      "name": "AI 科技评论",
-      "url": "https://ai.leiphone.com/rss",
-      "category": "🤖 AI 资讯",
-      "weight": 9,
-      "keywords": ["AI", "人工智能", "技术", "大模型"]
-    },
-    {
       "name": "OpenAI Blog",
       "url": "https://openai.com/blog/rss.xml",
       "category": "🤖 AI 资讯",
