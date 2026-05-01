@@ -1,0 +1,102 @@
+{
+  "feeds": [
+    {
+      "name": "量子位",
+      "url": "https://www.qbitai.com/rss",
+      "category": "🤖 AI 资讯",
+      "weight": 10,
+      "keywords": ["AI", "大模型", "人工智能", "算法", "深度学习", "GPT", "模型"]
+    },
+    {
+      "name": "机器之心",
+      "url": "https://www.jiqizhixin.com/rss",
+      "category": "🤖 AI 资讯",
+      "weight": 10,
+      "keywords": ["AI", "机器学习", "大模型", "神经网络", "深度学习"]
+    },
+    {
+      "name": "AI 科技评论",
+      "url": "https://ai.leiphone.com/rss",
+      "category": "🤖 AI 资讯",
+      "weight": 9,
+      "keywords": ["AI", "人工智能", "技术", "大模型"]
+    },
+    {
+      "name": "OpenAI Blog",
+      "url": "https://openai.com/blog/rss.xml",
+      "category": "🤖 AI 资讯",
+      "weight": 10,
+      "keywords": ["GPT", "AI", "model", "intelligence"],
+      "language": "en"
+    },
+    {
+      "name": "Hugging Face",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "category": "🤖 AI 资讯",
+      "weight": 8,
+      "keywords": ["model", "AI", "transformer", "machine learning"],
+      "language": "en"
+    },
+    {
+      "name": "Anthropic",
+      "url": "https://www.anthropic.com/rss.xml",
+      "category": "🤖 AI 资讯",
+      "weight": 10,
+      "keywords": ["Claude", "AI", "safety", "model"],
+      "language": "en"
+    },
+    {
+      "name": "Google AI Blog",
+      "url": "https://blog.google/technology/ai/rss/",
+      "category": "🤖 AI 资讯",
+      "weight": 9,
+      "keywords": ["AI", "Gemini", "model", "DeepMind"],
+      "language": "en"
+    },
+    {
+      "name": "TechCrunch AI",
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "category": "🤖 AI 资讯",
+      "weight": 8,
+      "keywords": ["AI", "startup", "LLM", "model"],
+      "language": "en"
+    },
+    {
+      "name": "The Verge AI",
+      "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+      "category": "🤖 AI 资讯",
+      "weight": 8,
+      "keywords": ["AI", "model", "robot", "intelligence"],
+      "language": "en"
+    },
+    {
+      "name": "36 氪 AI",
+      "url": "https://36kr.com/feed",
+      "category": "🤖 AI 资讯",
+      "weight": 9,
+      "keywords": ["AI", "大模型", "智能", "人工智能", "机器人"]
+    },
+    {
+      "name": "arXiv AI",
+      "url": "https://rss.arxiv.org/rss/cs.AI",
+      "category": "📄 论文速递",
+      "weight": 7,
+      "keywords": ["AI", "model", "learning", "neural"],
+      "language": "en"
+    },
+    {
+      "name": "arXiv LLM",
+      "url": "https://rss.arxiv.org/rss/cs.CL",
+      "category": "📄 论文速递",
+      "weight": 7,
+      "keywords": ["language", "model", "LLM", "transformer"],
+      "language": "en"
+    }
+  ],
+  "settings": {
+    "max_items_per_feed": 10,
+    "max_per_category": 15,
+    "min_title_length": 8,
+    "blacklist_keywords": ["广告", "推广", "赞助", "直播", "招聘", "活动", "会议", "培训", "课程", "优惠", "促销", "抽奖", "福利", "enroll", "webinar", "sponsored", "advertisement"]
+  }
+}
