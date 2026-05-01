@@ -29,33 +29,58 @@ def fetch_hacker_news(limit=20):
     """Hacker News 热门 AI 帖子 (按 points 排序)"""
     items = []
     try:
-        # 搜索 AI 相关，按热度排序
+        # 先获取热门故事 ID
         resp = requests.get(
-            "https://hn.algolia.com/api/v1/search",
-            params={
-                "query": "AI OR LLM OR GPT OR Claude OR Gemini OR DeepSeek OR OpenAI OR Anthropic",
-                "tags": "story",
-                "hitsPerPage": 30,
-                "numericFilters": "points>10",  # 至少10个赞
-            },
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
             timeout=15,
         )
-        data = resp.json()
-        for hit in data.get("hits", []):
-            if hit.get("title") and hit.get("url"):
-                items.append({
-                    "title": hit["title"],
-                    "link": hit["url"],
-                    "source": "Hacker News",
-                    "points": hit.get("points", 0),
-                    "comments": hit.get("num_comments", 0),
-                    "score": hit.get("points", 0),
-                    "date": hit.get("created_at", "")[:16],
-                })
+        if resp.status_code == 200:
+            story_ids = resp.json()[:50]
+            for sid in story_ids:
+                try:
+                    sr = requests.get(f"https://hacker-news.firebaseio.com/v0/item/{sid}.json", timeout=10)
+                    if sr.status_code == 200:
+                        d = sr.json()
+                        title = d.get("title", "")
+                        # 过滤 AI 相关
+                        ai_keywords = ["ai", "llm", "gpt", "claude", "gemini", "deepseek", "openai", "anthropic", "model", "neural", "transformer", "machine learning", "artificial"]
+                        if any(kw in title.lower() for kw in ai_keywords) and d.get("url"):
+                            items.append({
+                                "title": title,
+                                "link": d["url"],
+                                "source": "Hacker News",
+                                "points": d.get("score", 0),
+                                "comments": d.get("descendants", 0),
+                                "score": d.get("score", 0),
+                                "date": "",
+                            })
+                except:
+                    continue
+                if len(items) >= limit:
+                    break
     except Exception as e:
-        print(f"HN fetch failed: {e}")
+        print(f"HN fetch failed: {e}, trying Algolia...")
+        # fallback: Algolia
+        try:
+            resp = requests.get(
+                "https://hn.algolia.com/api/v1/search",
+                params={"query": "AI LLM GPT Claude", "tags": "story", "hitsPerPage": 30, "numericFilters": "points>10"},
+                timeout=15,
+            )
+            for hit in resp.json().get("hits", []):
+                if hit.get("title") and hit.get("url"):
+                    items.append({
+                        "title": hit["title"],
+                        "link": hit["url"],
+                        "source": "Hacker News",
+                        "points": hit.get("points", 0),
+                        "comments": hit.get("num_comments", 0),
+                        "score": hit.get("points", 0),
+                        "date": hit.get("created_at", "")[:16],
+                    })
+        except Exception as e2:
+            print(f"Algolia also failed: {e2}")
     
-    # 按热度排序
     items.sort(key=lambda x: x["score"], reverse=True)
     return items[:limit]
 
@@ -72,6 +97,7 @@ def fetch_reddit_ai(limit=15):
                 timeout=15,
             )
             if resp.status_code != 200:
+                print(f"  Reddit r/{sub}: HTTP {resp.status_code}")
                 continue
             data = resp.json()
             for post in data.get("data", {}).get("children", []):
