@@ -17,14 +17,6 @@
       "language": "en"
     },
     {
-      "name": "Anthropic",
-      "url": "https://www.anthropic.com/rss.xml",
-      "category": "🤖 AI 资讯",
-      "weight": 10,
-      "keywords": ["Claude", "AI", "safety", "model"],
-      "language": "en"
-    },
-    {
       "name": "Google AI Blog",
       "url": "https://blog.google/technology/ai/rss/",
       "category": "🤖 AI 资讯",
@@ -47,13 +39,6 @@
       "weight": 8,
       "keywords": ["AI", "model", "robot", "intelligence"],
       "language": "en"
-    },
-    {
-      "name": "36 氪 AI",
-      "url": "https://36kr.com/feed",
-      "category": "🤖 AI 资讯",
-      "weight": 9,
-      "keywords": ["AI", "大模型", "智能", "人工智能", "机器人"]
     },
     {
       "name": "arXiv AI",
