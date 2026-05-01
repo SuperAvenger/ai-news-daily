@@ -276,8 +276,16 @@ def format_message(articles):
     if not articles:
         return "今日暂无内容"
     
-    # 按 score 降序排序（热度优先）
-    articles.sort(key=lambda x: x.get('score', 0), reverse=True)
+    # 按发布时间倒序（最新最热的排前面）
+    def time_score(article):
+        if article.get('published'):
+            try:
+                return time.mktime(article['published'])
+            except:
+                pass
+        return 0
+    
+    articles.sort(key=time_score, reverse=True)
     
     by_category = {}
     for article in articles:
