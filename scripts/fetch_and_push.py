@@ -156,7 +156,7 @@ def fetch_reddit_ai(limit=15):
 
 
 def fetch_rss_supplement(limit=10):
-    """RSS 补充源 (不排序，作为补充)"""
+    """RSS 补充源 (带摘要)"""
     feeds = [
         ("https://techcrunch.com/category/artificial-intelligence/feed/", "TechCrunch"),
         ("https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "The Verge"),
@@ -170,12 +170,20 @@ def fetch_rss_supplement(limit=10):
             for item in soup.find_all("item")[:5]:
                 title = item.find("title")
                 link = item.find("link")
+                desc = item.find("description") or item.find("summary") or item.find("content:encoded")
                 if title and link:
                     href = link.get_text(strip=True) or (link.next_sibling.strip() if link.next_sibling else "")
+                    summary = ""
+                    if desc:
+                        raw = desc.get_text(strip=True)
+                        # 清理 HTML
+                        summary = BeautifulSoup(raw, "html.parser").get_text(strip=True)[:200]
+                    
                     items.append({
                         "title": title.get_text(strip=True),
                         "link": href,
                         "source": name,
+                        "summary": summary,
                         "score": 0,
                         "date": "",
                     })
@@ -187,36 +195,26 @@ def fetch_rss_supplement(limit=10):
 # ── DeepSeek 翻译 ──────────────────────────────────────────
 
 def translate_batch(titles):
-    """批量翻译标题 (减少 API 调用)"""
+    """批量翻译标题"""
     if not DEEPSEEK_API_KEY:
         return titles
     
-    # 每批最多 10 个
     all_translated = []
     for i in range(0, len(titles), 10):
         batch = titles[i:i+10]
         numbered = "\n".join(f"{j+1}. {t}" for j, t in enumerate(batch))
-        prompt = f"""将以下英文AI新闻标题翻译成中文，保留编号，只输出翻译结果：
+        prompt = f"""将以下英文AI新闻标题翻译成中文，保留编号，只输出翻译：
 {numbered}"""
         
         try:
             resp = requests.post(
                 DEEPSEEK_ENDPOINT,
-                headers={
-                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': DEEPSEEK_MODEL,
-                    'messages': [{'role': 'user', 'content': prompt}],
-                    'max_tokens': 500,
-                },
+                headers={'Authorization': f'Bearer {DEEPSEEK_API_KEY}', 'Content-Type': 'application/json'},
+                json={'model': DEEPSEEK_MODEL, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 500},
                 timeout=30,
             )
             if resp.status_code == 200:
-                result = resp.json()
-                content = result['choices'][0]['message']['content'].strip()
-                # 解析编号
+                content = resp.json()['choices'][0]['message']['content'].strip()
                 for line in content.split('\n'):
                     line = line.strip()
                     m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
@@ -225,47 +223,36 @@ def translate_batch(titles):
                     elif line:
                         all_translated.append(line)
         except Exception as e:
-            print(f"Translate batch failed: {e}")
+            print(f"Translate titles failed: {e}")
             all_translated.extend(batch)
-        
         time.sleep(0.5)
     
-    # 补齐
     while len(all_translated) < len(titles):
         all_translated.append(titles[len(all_translated)])
-    
     return all_translated[:len(titles)]
 
 
-def translate_summaries(titles, summaries):
-    """批量翻译摘要"""
+def translate_summaries(summaries):
+    """批量翻译摘要为中文"""
     if not DEEPSEEK_API_KEY:
         return summaries
     
     all_translated = []
     for i in range(0, len(summaries), 5):
         batch = summaries[i:i+5]
-        numbered = "\n".join(f"{j+1}. {t[:200]}" for j, t in enumerate(batch))
-        prompt = f"""将以下英文AI新闻摘要翻译成中文（每条50-80字），保留编号，只输出翻译：
+        numbered = "\n".join(f"{j+1}. {s[:200]}" for j, s in enumerate(batch))
+        prompt = f"""将以下英文内容翻译成简洁中文摘要（每条30-50字），保留编号，只输出翻译：
 {numbered}"""
         
         try:
             resp = requests.post(
                 DEEPSEEK_ENDPOINT,
-                headers={
-                    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': DEEPSEEK_MODEL,
-                    'messages': [{'role': 'user', 'content': prompt}],
-                    'max_tokens': 800,
-                },
+                headers={'Authorization': f'Bearer {DEEPSEEK_API_KEY}', 'Content-Type': 'application/json'},
+                json={'model': DEEPSEEK_MODEL, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 600},
                 timeout=30,
             )
             if resp.status_code == 200:
-                result = resp.json()
-                content = result['choices'][0]['message']['content'].strip()
+                content = resp.json()['choices'][0]['message']['content'].strip()
                 for line in content.split('\n'):
                     line = line.strip()
                     m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
@@ -276,12 +263,10 @@ def translate_summaries(titles, summaries):
         except Exception as e:
             print(f"Translate summaries failed: {e}")
             all_translated.extend(batch)
-        
         time.sleep(0.5)
     
     while len(all_translated) < len(summaries):
         all_translated.append(summaries[len(all_translated)])
-    
     return all_translated[:len(summaries)]
 
 
@@ -303,7 +288,10 @@ def push_to_feishu(hn_items, reddit_items, rss_items):
             total += 1
             points = item.get('points', 0)
             title = item.get('cn_title', item['title'])
+            summary = item.get('cn_summary', '')
             lines.append(f"\n**{i}. {title}**")
+            if summary:
+                lines.append(f"💡 {summary}")
             lines.append(f"⬆️ {points}分 | 💬 {item.get('comments',0)}评论")
             lines.append(f"🔗 [阅读原文]({item['link']})")
 
@@ -314,7 +302,10 @@ def push_to_feishu(hn_items, reddit_items, rss_items):
             total += 1
             points = item.get('points', 0)
             title = item.get('cn_title', item['title'])
+            summary = item.get('cn_summary', '')
             lines.append(f"\n**{i}. {title}**")
+            if summary:
+                lines.append(f"💡 {summary}")
             lines.append(f"⬆️ {points}分 | 📍 {item['source']}")
             lines.append(f"🔗 [阅读原文]({item['link']})")
 
@@ -324,7 +315,10 @@ def push_to_feishu(hn_items, reddit_items, rss_items):
         for i, item in enumerate(rss_items, 1):
             total += 1
             title = item.get('cn_title', item['title'])
+            summary = item.get('cn_summary', '')
             lines.append(f"\n**{i}. {title}**")
+            if summary:
+                lines.append(f"💡 {summary}")
             lines.append(f"📍 {item['source']}")
             lines.append(f"🔗 [阅读原文]({item['link']})")
 
@@ -375,17 +369,38 @@ def main():
     # 2. 批量翻译标题
     all_titles = [i['title'] for i in hn_items + reddit_items + rss_items]
     print(f"\n>>> 翻译 {len(all_titles)} 个标题...")
-    translated = translate_batch(all_titles)
+    translated_titles = translate_batch(all_titles)
 
     idx = 0
     for item in hn_items:
-        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        item['cn_title'] = translated_titles[idx] if idx < len(translated_titles) else item['title']
         idx += 1
     for item in reddit_items:
-        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        item['cn_title'] = translated_titles[idx] if idx < len(translated_titles) else item['title']
         idx += 1
     for item in rss_items:
-        item['cn_title'] = translated[idx] if idx < len(translated) else item['title']
+        item['cn_title'] = translated_titles[idx] if idx < len(translated_titles) else item['title']
+        idx += 1
+
+    # 3. 翻译摘要 (RSS 有现成摘要，HN/Reddit 用标题生成)
+    all_summaries = []
+    for item in rss_items:
+        all_summaries.append(item.get('summary', '') or item['title'])
+    # HN/Reddit 没有摘要，用标题作为摘要输入
+    for item in hn_items + reddit_items:
+        all_summaries.append(item['title'])
+    
+    print(f">>> 翻译 {len(all_summaries)} 条摘要...")
+    translated_summaries = translate_summaries(all_summaries)
+    
+    # RSS 摘要
+    idx = 0
+    for item in rss_items:
+        item['cn_summary'] = translated_summaries[idx] if idx < len(translated_summaries) else ''
+        idx += 1
+    # HN/Reddit 摘要
+    for item in hn_items + reddit_items:
+        item['cn_summary'] = translated_summaries[idx] if idx < len(translated_summaries) else ''
         idx += 1
 
     # 3. 推送
