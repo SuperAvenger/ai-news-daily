@@ -49,15 +49,13 @@ def _call_deepseek(prompt: str, max_tokens: int = 600) -> str:
 
 def _parse_numbered(text: str) -> list[str]:
     """从 LLM 输出中提取编号列表"""
-    results = []
-    for line in text.split('\n'):
-        line = line.strip()
-        m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
-        if m:
-            results.append(m.group(1))
-        elif line:
-            results.append(line)
-    return results
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    numbered = []
+    for line in lines:
+        match = re.match(r'^\d+[\.\)、]\s*(.+)', line)
+        if match:
+            numbered.append(match.group(1))
+    return numbered or lines
 
 
 # ── 数据源采集 ─────────────────────────────────────────────

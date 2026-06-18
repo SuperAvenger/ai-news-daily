@@ -11,3 +11,7 @@
 GitHub Secrets:
 - `FEISHU_WEBHOOK` - 飞书群 Webhook
 - `DEEPSEEK_API_KEY` - DeepSeek API Key
+
+## Roadmap
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for pipeline reuse, observability, and read-only MCP expansion priorities.
