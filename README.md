@@ -1,13 +1,21 @@
 # AI 资讯日报
 
-每日自动抓取 AI 资讯，Kimi 翻译英文，飞书推送。
+每日自动抓取 AI 资讯，DeepSeek 翻译/摘要英文内容，并推送到飞书。
+
+RSS 采集能力已统一到本项目：订阅源由 `config/feeds.json` 管理，支持源权重、关键词过滤、质量过滤和跨来源去重。
 
 ## 数据源
 - 量子位、机器之心、AI 科技评论、36 氪（中文）
-- OpenAI、Anthropic、Google AI、TechCrunch、The Verge、Hugging Face（英文→Kimi翻译）
-- arXiv AI/LLM 论文速递（英文→Kimi翻译）
+- OpenAI、Anthropic、Google AI、TechCrunch、The Verge、Hugging Face（英文→DeepSeek 翻译/摘要）
+- arXiv AI/LLM 论文速递（英文→DeepSeek 翻译/摘要）
 
 ## 配置
 GitHub Secrets:
 - `FEISHU_WEBHOOK` - 飞书群 Webhook
-- `KIMI_API_KEY` - Kimi (Moonshot) API Key
+- `DEEPSEEK_API_KEY` - DeepSeek API Key
+
+本项目定位为个人 AI 情报工具。原 `-rss-digest` 仓库仅在迁移验证完成后归档或删除。
+
+## Roadmap
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for pipeline reuse, observability, and read-only MCP expansion priorities.

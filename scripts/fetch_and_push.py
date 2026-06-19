@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
+import feedparser
 from bs4 import BeautifulSoup
 
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK', '')
@@ -21,6 +22,7 @@ DEEPSEEK_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+CONFIG_PATH = Path(__file__).parent.parent / "config" / "feeds.json"
 
 
 # ── DeepSeek 统一调用 ──────────────────────────────────────
@@ -49,18 +51,70 @@ def _call_deepseek(prompt: str, max_tokens: int = 600) -> str:
 
 def _parse_numbered(text: str) -> list[str]:
     """从 LLM 输出中提取编号列表"""
-    results = []
-    for line in text.split('\n'):
-        line = line.strip()
-        m = re.match(r'^\d+[\.\)、]\s*(.+)', line)
-        if m:
-            results.append(m.group(1))
-        elif line:
-            results.append(line)
-    return results
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    numbered = []
+    for line in lines:
+        match = re.match(r'^\d+[\.\)、]\s*(.+)', line)
+        if match:
+            numbered.append(match.group(1))
+    return numbered or lines
 
 
 # ── 数据源采集 ─────────────────────────────────────────────
+
+def load_feed_config(path: Path = CONFIG_PATH) -> dict:
+    """Load the personal RSS allowlist and ranking settings."""
+    with path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    config.setdefault("feeds", [])
+    config.setdefault("settings", {})
+    return config
+
+
+def is_quality_article(title: str, summary: str, settings: dict) -> bool:
+    text = f"{title} {summary or ''}".lower()
+    if len(title.strip()) < settings.get("min_title_length", 8):
+        return False
+    return not any(keyword.lower() in text for keyword in settings.get("blacklist_keywords", []))
+
+
+def match_keywords(title: str, summary: str, keywords: list[str]) -> float:
+    """Return a deterministic relevance value in the 0..1 range."""
+    if not keywords:
+        return 1.0
+    text = f"{title} {summary or ''}".lower()
+    matches = sum(1 for keyword in keywords if keyword.lower() in text)
+    return 0.5 + (matches / len(keywords)) * 0.5 if matches else 0.0
+
+
+def _canonical_link(link: str) -> str:
+    return (link or "").split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+
+def deduplicate_groups(*groups: list[dict]) -> tuple[list[dict], ...]:
+    """Deduplicate globally while preserving the source group of each item."""
+    seen_links = set()
+    seen_titles = set()
+    results = []
+    for group in groups:
+        unique = []
+        for item in group:
+            link = _canonical_link(item.get("link", ""))
+            title = re.sub(r"\W+", "", item.get("title", "")).lower()
+            if (link and link in seen_links) or (title and title in seen_titles):
+                continue
+            if link:
+                seen_links.add(link)
+            if title:
+                seen_titles.add(title)
+            unique.append(item)
+        results.append(unique)
+    return tuple(results)
+
+
+def deduplicate_items(items: list[dict]) -> list[dict]:
+    """Deduplicate by canonical URL first, then normalized title."""
+    return deduplicate_groups(items)[0]
 
 def fetch_hacker_news(limit=20):
     """Hacker News 热门 AI 帖子 (按 points 排序)"""
@@ -187,39 +241,43 @@ def fetch_reddit_ai(limit=15):
     return items[:limit]
 
 
-def fetch_rss_supplement(limit=10):
-    """RSS 补充源 (带摘要)"""
-    feeds = [
-        ("https://techcrunch.com/category/artificial-intelligence/feed/", "TechCrunch"),
-        ("https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "The Verge"),
-        ("https://blog.google/technology/ai/rss/", "Google AI"),
-    ]
+def fetch_rss_supplement(limit=10, config=None):
+    """Fetch configured RSS sources with filtering and deterministic ranking."""
+    config = config or load_feed_config()
+    settings = config.get("settings", {})
     items = []
-    for url, name in feeds:
+    source_limit = settings.get("max_items_per_feed", 10)
+    for feed_config in config.get("feeds", []):
+        if feed_config.get("enabled", True) is False:
+            continue
+        url = feed_config["url"]
+        name = feed_config["name"]
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for item in soup.find_all("item")[:5]:
-                title = item.find("title")
-                link = item.find("link")
-                desc = item.find("description") or item.find("summary") or item.find("content:encoded")
-                if title and link:
-                    href = link.get_text(strip=True) or (link.next_sibling.strip() if link.next_sibling else "")
-                    summary = ""
-                    if desc:
-                        raw = desc.get_text(strip=True)
-                        summary = BeautifulSoup(raw, "html.parser").get_text(strip=True)[:200]
-
-                    items.append({
-                        "title": title.get_text(strip=True),
-                        "link": href,
-                        "source": name,
-                        "summary": summary,
-                        "score": 0,
-                        "date": "",
-                    })
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.content)
+            for entry in feed.entries[:source_limit]:
+                title = str(entry.get("title", "")).strip()
+                summary = BeautifulSoup(str(entry.get("summary", "")), "html.parser").get_text(" ", strip=True)[:300]
+                if not is_quality_article(title, summary, settings):
+                    continue
+                relevance = match_keywords(title, summary, feed_config.get("keywords", []))
+                if relevance == 0:
+                    continue
+                weight = float(feed_config.get("weight", 5))
+                items.append({
+                    "title": title,
+                    "link": entry.get("link", ""),
+                    "source": name,
+                    "category": feed_config.get("category", "AI 资讯"),
+                    "summary": summary,
+                    "score": round(weight * relevance, 3),
+                    "date": entry.get("published", entry.get("updated", "")),
+                })
         except Exception as e:
             print(f"RSS ({name}) failed: {e}")
+    items = deduplicate_items(items)
+    items.sort(key=lambda item: item.get("score", 0), reverse=True)
     return items[:limit]
 
 
@@ -375,6 +433,7 @@ def main():
     rss_items = fetch_rss_supplement(5)
     print(f"  获取 {len(rss_items)} 条")
 
+    hn_items, reddit_items, rss_items = deduplicate_groups(hn_items, reddit_items, rss_items)
     all_items = hn_items + reddit_items + rss_items
     if not all_items:
         print("⚠️ 无数据，退出")
