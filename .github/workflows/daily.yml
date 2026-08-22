@@ -2,13 +2,18 @@ name: AI News Daily
 
 on:
   schedule:
-    # 每天早上 7:00 北京时间 (UTC 23:00)
+    # 每天早上 7:00 北京时间，UTC 23:00
     - cron: '0 23 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: ai-news-daily
+  cancel-in-progress: false
 
 jobs:
   ai-news:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,12 +22,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install dependencies
-        run: pip install feedparser requests beautifulsoup4
+        run: pip install -r requirements.txt
 
-      - name: AI News Daily
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate and push digest
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: deepseek-v4-flash
+          APP_TIMEZONE: Asia/Shanghai
+          LOOKBACK_HOURS: '24'
+          MAX_TOTAL_ITEMS: '20'
         run: python scripts/fetch_and_push.py
