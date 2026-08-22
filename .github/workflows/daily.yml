@@ -5,6 +5,13 @@ on:
     # 每天早上 7:00 北京时间，UTC 23:00
     - cron: '0 23 * * *'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/daily.yml'
+      - 'config/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'requirements.txt'
 
 concurrency:
   group: ai-news-daily
@@ -31,6 +38,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Generate and push digest
+        if: github.event_name != 'pull_request'
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
