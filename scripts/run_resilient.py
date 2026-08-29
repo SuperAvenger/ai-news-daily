@@ -6,11 +6,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from scripts import fetch_and_push as app
+from scripts import fetch_and_push_base as app
 
 
 MAX_SKIPPED_ENRICHMENTS = int(os.environ.get("MAX_SKIPPED_ENRICHMENTS", "3"))
-_ORIGINAL_PARSE_ENRICHMENT = app._parse_enrichment
 _ORIGINAL_ENRICH_ITEMS = app.enrich_items
 
 
