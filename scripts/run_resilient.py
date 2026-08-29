@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the AI news pipeline with guarded enrichment fallbacks."""
+"""Run the AI news pipeline with guarded fallbacks."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from scripts import fetch_and_push_base as app
+from scripts.reddit_fallback import fetch_reddit_ai_resilient
 
 
 MAX_SKIPPED_ENRICHMENTS = int(os.environ.get("MAX_SKIPPED_ENRICHMENTS", "3"))
@@ -74,6 +75,7 @@ def enrich_items_resilient(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def install_resilience() -> None:
     app._parse_enrichment = parse_enrichment_resilient
     app.enrich_items = enrich_items_resilient
+    app.fetch_reddit_ai = fetch_reddit_ai_resilient
 
 
 def main() -> None:
