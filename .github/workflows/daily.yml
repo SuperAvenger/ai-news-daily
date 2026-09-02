@@ -1,6 +1,15 @@
 name: AI News Daily
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/daily.yml'
+      - 'config/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'requirements.txt'
   schedule:
     # 每天早上 7:00 北京时间，UTC 23:00
     - cron: '0 23 * * *'
