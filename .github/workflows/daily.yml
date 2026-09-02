@@ -46,4 +46,4 @@ jobs:
           APP_TIMEZONE: Asia/Shanghai
           LOOKBACK_HOURS: '24'
           MAX_TOTAL_ITEMS: '20'
-        run: python scripts/fetch_and_push.py
+        run: python -m scripts.fetch_and_push
