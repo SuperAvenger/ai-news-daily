@@ -59,6 +59,10 @@ class PipelineError(RuntimeError):
     """Raised when a digest would be incomplete or misleading."""
 
 
+class ProviderBillingError(PipelineError):
+    """The provider requires billing action before enrichment can resume."""
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -434,6 +438,8 @@ def _call_deepseek_json(prompt: str, attempts: int = 3) -> dict[str, Any]:
                 json=payload,
                 timeout=60,
             )
+            if response.status_code == 402:
+                raise ProviderBillingError("DeepSeek billing requires attention (HTTP 402)")
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"].strip()
             return json.loads(content)
@@ -599,6 +605,31 @@ def push_to_feishu(items: list[dict[str, Any]], generated_at: datetime) -> None:
     if code not in (0, "0", None):
         raise PipelineError(f"Feishu rejected the message: {result}")
     print(f"Feishu push succeeded with {len(items)} items")
+
+
+def notify_billing_failure() -> None:
+    """Explain an actionable publishing failure without exposing credentials."""
+    if not FEISHU_WEBHOOK:
+        raise PipelineError("FEISHU_WEBHOOK is missing")
+    response = requests.post(
+        FEISHU_WEBHOOK,
+        json={
+            "msg_type": "text",
+            "content": {"text": (
+                "AI 资讯日报今日未能生成：DeepSeek 摘要服务返回 402（需要处理 API 计费）。"
+                "请检查配置的 API 账号余额；处理完成后可手动重跑 AI News Daily，"
+                "或等待下一次定时运行。\n"
+                "运行记录：https://github.com/SuperAvenger/ai-news-daily/actions/workflows/daily.yml"
+            )},
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    result = response.json()
+    code = result.get("code", result.get("StatusCode"))
+    if code not in (0, "0"):
+        raise PipelineError("Feishu rejected the billing failure notification")
+    print("Feishu billing failure notification succeeded")
 
 
 def save_output(items: list[dict[str, Any]], generated_at: datetime) -> Path:

@@ -80,7 +80,15 @@ def install_resilience() -> None:
 
 def main() -> None:
     install_resilience()
-    app.main()
+    try:
+        app.main()
+    except app.ProviderBillingError:
+        try:
+            app.notify_billing_failure()
+        except Exception as exc:
+            # Do not include response bodies or webhook URLs in diagnostic output.
+            print(f"Billing failure notification failed ({type(exc).__name__})")
+        raise
 
 
 if __name__ == "__main__":
