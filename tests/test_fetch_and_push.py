@@ -102,6 +102,43 @@ class NewsPipelineTests(unittest.TestCase):
         self.assertIn("Hacker News（1条）", rendered)
         self.assertEqual(rendered.count("[阅读原文]"), 1)
 
+    @patch.object(app.requests, "get")
+    def test_fetch_aihot_parses_items_and_filters_window(self, mock_get):
+        response = Mock()
+        response.json.return_value = {
+            "items": [
+                {
+                    "title": "Kimi发布新模型",
+                    "originalTitle": "Kimi release",
+                    "summary": "Kimi发布全新模型并在各项评测领先。",
+                    "publishedAt": (self.now - timedelta(hours=3)).isoformat(),
+                    "source": {"name": "IT之家"},
+                    "links": {
+                        "original": "https://example.com/kimi",
+                        "aihot": "https://aihot.news/items/123",
+                    },
+                    "score": 90,
+                },
+                {
+                    "title": "很久以前的旧闻",
+                    "originalTitle": "Old news",
+                    "summary": "这是超过24小时的旧闻内容摘要。",
+                    "publishedAt": (self.now - timedelta(hours=30)).isoformat(),
+                    "source": {"name": "某媒体"},
+                    "links": {"original": "https://example.com/old"},
+                    "score": 50,
+                },
+            ]
+        }
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+        items = app.fetch_aihot(limit=5, now=self.now)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["cn_title"], "Kimi发布新模型")
+        self.assertEqual(items[0]["source"], "AIHOT · IT之家")
+        self.assertEqual(items[0]["link"], "https://example.com/kimi")
+        self.assertIn("领先", items[0]["cn_summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,9 +4,10 @@
 
 ## 数据源
 
-1. Hacker News 热门榜和 Algolia 近期索引
-2. Reddit 的 AI、Machine Learning、LocalLLaMA、singularity 社区
-3. `config/feeds.json` 中配置的官方博客、科技媒体和 arXiv RSS
+1. AIHOT (`https://aihot.news/`) 官方 API 每日精选
+2. Hacker News 热门榜和 Algolia 近期索引
+3. Reddit 的 AI、Machine Learning、LocalLLaMA、singularity 社区
+4. `config/feeds.json` 中配置的官方博客、科技媒体和 arXiv RSS
 
 所有来源统一执行发布时间过滤和 URL 规范化去重。缺少发布时间的内容不会进入日报。
 

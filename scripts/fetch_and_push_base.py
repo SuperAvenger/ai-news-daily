@@ -36,6 +36,11 @@ HEADERS = {
     "User-Agent": "ai-news-daily/2.0 (+https://github.com/SuperAvenger/ai-news-daily)"
 }
 
+AIHOT_HEADERS = {
+    "User-Agent": "aihot-api/2.0.0 aihot-actor/ai-news-daily",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
 AI_TITLE_PATTERN = re.compile(
     r"\b(?:ai|llms?|gpt(?:-?\d[\w.-]*)?|chatgpt|openai|anthropic|claude|gemini|"
     r"deepseek|copilot|neural|transformers?|diffusion|midjourney|dall-e)\b|"
@@ -385,17 +390,80 @@ def fetch_rss_supplement(
     return items[:limit]
 
 
+def fetch_aihot(limit: int = 10, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Fetch recent selected AI stories from aihot.news API."""
+    current = _as_utc(now or utc_now())
+    items: list[dict[str, Any]] = []
+    url = f"https://aihot.news/api/v1/items?mode=selected&window={LOOKBACK_HOURS}h&limit={max(limit, 10)}"
+    try:
+        response = requests.get(
+            url,
+            headers={**HEADERS, **AIHOT_HEADERS},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"AIHOT fetch failed: {exc}")
+        return []
+
+    for row in data.get("items", []):
+        try:
+            pub_str = row.get("publishedAt")
+            if not pub_str:
+                continue
+            published = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+            if not is_recent(published, current):
+                continue
+            title = str(row.get("title") or row.get("originalTitle") or "").strip()
+            summary = str(row.get("summary") or "").strip()
+            links = row.get("links") or {}
+            link = links.get("original") or links.get("aihot") or ""
+            source_info = row.get("source") or {}
+            source_name = source_info.get("name") or "精选"
+            full_source = f"AIHOT · {source_name}" if not source_name.startswith("AIHOT") else source_name
+            score = row.get("score") or 0
+
+            if not title or not link:
+                continue
+
+            item = _item(
+                title=title,
+                link=link,
+                source=full_source,
+                published_at=published,
+                score=score,
+                summary=summary,
+                weight=10,
+            )
+            # AIHOT natively provides high-quality Chinese titles and summaries
+            if _contains_chinese(title) and _contains_chinese(summary):
+                item["cn_title"] = title
+                item["cn_summary"] = summary
+            items.append(item)
+        except Exception as exc:
+            print(f"Error parsing AIHOT item: {exc}")
+            continue
+
+    items = dedupe_items(items)
+    items.sort(key=lambda r: (r["score"], r["published_at"]), reverse=True)
+    return items[:limit]
+
+
 def select_balanced(
     hn_items: list[dict[str, Any]],
     reddit_items: list[dict[str, Any]],
     rss_items: list[dict[str, Any]],
+    aihot_items: list[dict[str, Any]] | None = None,
     max_total: int = MAX_TOTAL_ITEMS,
 ) -> list[dict[str, Any]]:
     """Keep source diversity, then fill unused capacity with remaining fresh items."""
+    aihot_items = aihot_items or []
     quotas = (
-        (hn_items, min(8, max_total)),
-        (reddit_items, min(5, max_total)),
-        (rss_items, min(7, max_total)),
+        (aihot_items, min(5, max_total)),
+        (hn_items, min(6, max_total)),
+        (reddit_items, min(4, max_total)),
+        (rss_items, min(5, max_total)),
     )
     selected: list[dict[str, Any]] = []
     leftovers: list[dict[str, Any]] = []
@@ -470,10 +538,12 @@ def _parse_enrichment(data: dict[str, Any], expected: int) -> dict[int, tuple[st
 
 
 def enrich_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Translate and summarize every item, retrying partial batches individually."""
+    """Translate and summarize every item, skipping items already enriched."""
     enriched = [dict(item) for item in items]
-    for start in range(0, len(enriched), 8):
-        batch = enriched[start : start + 8]
+    pending = [item for item in enriched if not (item.get("cn_title") and item.get("cn_summary"))]
+
+    for start in range(0, len(pending), 8):
+        batch = pending[start : start + 8]
         input_rows = [
             {
                 "index": index,
@@ -542,6 +612,7 @@ def validate_digest(
 
 def _group_items(items: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
     groups = [
+        ("🔥 AIHOT 每日精选", [item for item in items if item["source"].startswith("AIHOT")]),
         ("🔥 Hacker News", [item for item in items if item["source"] == "Hacker News"]),
         ("🔴 Reddit", [item for item in items if item["source"].startswith("r/")]),
         (
@@ -549,7 +620,9 @@ def _group_items(items: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, 
             [
                 item
                 for item in items
-                if item["source"] != "Hacker News" and not item["source"].startswith("r/")
+                if not item["source"].startswith("AIHOT")
+                and item["source"] != "Hacker News"
+                and not item["source"].startswith("r/")
             ],
         ),
     ]
@@ -653,14 +726,15 @@ def main() -> None:
         f"AI news pipeline started at {generated_at.isoformat()}, "
         f"window={LOOKBACK_HOURS}h, max={MAX_TOTAL_ITEMS}"
     )
+    aihot_items = fetch_aihot(10, generated_at)
     hn_items = fetch_hacker_news(12, generated_at)
     reddit_items = fetch_reddit_ai(8, generated_at)
     rss_items = fetch_rss_supplement(20, generated_at)
     print(
-        f"Collected HN={len(hn_items)}, Reddit={len(reddit_items)}, RSS={len(rss_items)}"
+        f"Collected AIHOT={len(aihot_items)}, HN={len(hn_items)}, Reddit={len(reddit_items)}, RSS={len(rss_items)}"
     )
 
-    selected = select_balanced(hn_items, reddit_items, rss_items)
+    selected = select_balanced(hn_items, reddit_items, rss_items, aihot_items)
     selected = enrich_items(selected)
     validate_digest(selected, generated_at)
     output_path = save_output(selected, generated_at)
