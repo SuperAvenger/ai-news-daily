@@ -38,7 +38,7 @@ HEADERS = {
 
 AIHOT_HEADERS = {
     "User-Agent": "aihot-api/2.0.0 aihot-actor/ai-news-daily",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept": "application/json",
 }
 
 AI_TITLE_PATTERN = re.compile(
@@ -402,7 +402,11 @@ def fetch_aihot(limit: int = 10, now: datetime | None = None) -> list[dict[str, 
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
-        data = response.json()
+        text = response.text
+        if not text or not text.strip():
+            print(f"AIHOT returned empty response (status {response.status_code})")
+            return []
+        data = json.loads(text)
     except (requests.RequestException, ValueError) as exc:
         print(f"AIHOT fetch failed: {exc}")
         return []

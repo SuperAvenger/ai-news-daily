@@ -104,8 +104,7 @@ class NewsPipelineTests(unittest.TestCase):
 
     @patch.object(app.requests, "get")
     def test_fetch_aihot_parses_items_and_filters_window(self, mock_get):
-        response = Mock()
-        response.json.return_value = {
+        payload = {
             "items": [
                 {
                     "title": "Kimi发布新模型",
@@ -130,6 +129,9 @@ class NewsPipelineTests(unittest.TestCase):
                 },
             ]
         }
+        response = Mock()
+        response.text = json.dumps(payload)
+        response.json.return_value = payload
         response.raise_for_status.return_value = None
         mock_get.return_value = response
         items = app.fetch_aihot(limit=5, now=self.now)
